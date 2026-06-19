@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualizador EdBenTracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        hud: {
+                            bg: 'var(--bg-color)',
+                            card: 'var(--card-bg)',
+                            border: 'var(--border-color)',
+                            neonCyan: 'var(--neon-cyan)',
+                            neonPurple: 'var(--neon-purple)',
+                            text: 'var(--text-main)',
+                            textMuted: 'var(--text-muted)'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <style>
+        /* Variables de Entorno del HUD */
+        :root {
+            --bg-color: #000000;
+            --card-bg: rgba(12, 14, 18, 0.85);
+            --border-color: rgba(0, 255, 255, 0.2);
+            --text-main: #e2e8f0;
+            --text-muted: #64748b;
+            --neon-cyan: #00ffff;
+            --neon-purple: #e040fb;
+            --bg-gradient: radial-gradient(at 50% 0%, rgba(0, 255, 255, 0.12) 0px, transparent 50%),
+                           radial-gradient(at 0% 100%, rgba(224, 64, 251, 0.08) 0px, transparent 50%);
+        }
+        
+        /* Limitar el resumen del viaje a 2 líneas para evitar scroll horizontal */
+        #trip-summary {
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            white-space: normal;
+        }
+
+        body.light-theme {
+            --bg-color: #f1f5f9;
+            --card-bg: rgba(255, 255, 255, 0.85);
+            --border-color: rgba(15, 23, 42, 0.12);
+            --text-main: #0f172a;
+            --text-muted: #475569;
+            --neon-cyan: #0ea5e9;
+            --neon-purple: #7c3aed;
+            --bg-gradient: radial-gradient(at 50% 0%, rgba(14, 165, 233, 0.1) 0px, transparent 50%);
+        }
+
+        body {
+            background-color: var(--bg-color);
+            background-image: var(--bg-gradient);
+            background-attachment: fixed;
+            transition: background-color 0.2s ease;
+        }
+
+        .glass-panel {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border-color);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.15);
+            transition: background 0.2s ease, border-color 0.2s ease;
+        }
+
+        .neon-glow:hover {
+            box-shadow: 0 0 12px var(--neon-cyan);
+            border-color: var(--neon-cyan);
+        }
+
+        /* Corrección de colapso de dimensiones del Mapa */
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #0a192f;
+            z-index: 1;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--neon-cyan);
+            cursor: pointer;
+            box-shadow: 0 0 8px var(--neon-cyan);
+        }
+
+        /* Estilos de Popups & Tooltips de Leaflet */
+        .leaflet-popup-content-wrapper {
+            background: var(--card-bg) !important;
+            color: var(--text-main) !important;
+            border: 1px solid var(--neon-cyan) !important;
+            backdrop-filter: blur(8px);
+            border-radius: 8px !important;
+        }
+        .leaflet-popup-tip {
+            background: var(--card-bg) !important;
+            border-left: 1px solid var(--neon-cyan) !important;
+            border-bottom: 1px solid var(--neon-cyan) !important;
+        }
+        .hud-tooltip {
+            background: var(--neon-cyan) !important;
+            color: #050b14 !important;
+            font-weight: bold !important;
+            border: none !important;
+            box-shadow: 0 0 10px var(--neon-cyan) !important;
+            font-family: monospace;
+            font-size: 11px !important;
+            padding: 2px 6px !important;
+        }
+    </style>
+</head>
+<body class="text-hud-text font-sans min-h-screen flex flex-col">
+
+    <header class="w-full border-b border-hud-border bg-slate-950/10 backdrop-blur-md px-6 py-2 flex flex-wrap items-center justify-between gap-4 z-10">
+        <div class="flex items-center space-x-3">
+            <div class="p-1.5 rounded-lg bg-cyan-500/10 border border-hud-border text-hud-neonCyan">
+                <i data-lucide="activity" class="w-5 h-5"></i>
+            </div>
+            <div>
+                <h1 class="text-base font-black tracking-wider uppercase text-transparent bg-clip-text bg-gradient-to-r from-hud-neonCyan to-hud-neonPurple">
+                    Visualizador EdBenTracker
+                </h1>
+                <p id="trip-summary" class="text-[11px] text-hud-textMuted font-mono tracking-tight max-w-xl">
+                    Esperando carga de matriz de datos CSV...
+                </p>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-3">
+            <button onclick="toggleTheme()" class="p-2 rounded border border-hud-border bg-hud-card text-hud-text hover:text-hud-neonCyan transition">
+                <i data-lucide="sun" id="theme-icon-sun" class="w-4 h-4 hidden"></i>
+                <i data-lucide="moon" id="theme-icon-moon" class="w-4 h-4"></i>
+            </button>
+            
+            <label for="csv-file" class="flex items-center space-x-2 px-4 py-2 rounded border border-hud-neonCyan bg-cyan-500/10 text-hud-neonCyan hover:bg-cyan-500/20 cursor-pointer font-mono text-xs uppercase tracking-widest transition neon-glow">
+                <i data-lucide="upload-cloud" class="w-4 h-4"></i>
+                <span>Cargar CSV</span>
+            </label>
+            <input type="file" id="csv-file" accept=".csv" class="hidden" onchange="handleFileSelect(event)">
+        </div>
+    </header>
+
+    <main class="flex-1 w-full max-w-[1800px] mx-auto p-4 flex flex-col lg:grid lg:grid-cols-12 gap-4 overflow-hidden">
+        
+        <section class="lg:col-span-4 flex flex-col gap-4">
+            
+            <div class="glass-panel rounded-xl p-4 flex flex-col gap-3 relative">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-xs uppercase font-mono tracking-wider text-hud-textMuted flex items-center gap-2">
+                        <i data-lucide="sliders" class="w-4 h-4 text-hud-neonCyan"></i> Módulo de Reproducción
+                    </h2>
+                    
+                    <div class="flex space-x-1">
+                        <button onclick="zoomPlayback('in')" id="btn-p-zin" disabled title="Acercar línea de tiempo (Mayor resolución)"
+                            class="p-1 rounded border border-hud-border bg-hud-card text-hud-textMuted hover:text-hud-neonCyan disabled:opacity-30 transition">
+                            <i data-lucide="zoom-in" class="w-3.5 h-3.5"></i>
+                        </button>
+                        <button onclick="zoomPlayback('out')" id="btn-p-zout" disabled title="Alejar línea de tiempo"
+                            class="p-1 rounded border border-hud-border bg-hud-card text-hud-textMuted hover:text-hud-neonCyan disabled:opacity-30 transition">
+                            <i data-lucide="zoom-out" class="w-3.5 h-3.5"></i>
+                        </button>
+                        <button onclick="zoomPlayback('reset')" id="btn-p-zres" disabled title="Restaurar vista global"
+                            class="p-1 rounded border border-hud-border bg-hud-card text-hud-textMuted hover:text-hud-neonCyan disabled:opacity-30 transition">
+                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="w-full flex flex-col gap-1">
+                    <div class="flex justify-between font-mono text-[10px] text-hud-textMuted">
+                        <span id="time-start">00:00:00</span>
+                        <span id="time-current-lbl" class="text-hud-neonCyan font-bold">--:--:--</span>
+                        <span id="time-end">00:00:00</span>
+                    </div>
+                    <input type="range" id="timeline-slider" min="0" max="100" value="0" disabled
+                        class="w-full h-1 bg-slate-700/40 rounded-lg appearance-none cursor-not-allowed accent-hud-neonCyan"
+                        oninput="syncTimelineFromSlider(this.value)">
+                </div>
+
+                <div class="flex items-center justify-between pt-1">
+                    <button id="btn-play-pause" onclick="togglePlayback()" disabled
+                        class="p-2.5 rounded-lg border border-hud-border bg-hud-card hover:border-hud-neonCyan hover:text-hud-neonCyan disabled:opacity-30 transition">
+                        <i data-lucide="play" id="icon-play" class="w-4 h-4"></i>
+                    </button>
+
+                    <div class="flex bg-slate-900/10 rounded p-0.5 border border-hud-border font-mono text-xs">
+                        <button onclick="setSpeed(1)" class="speed-btn px-2 py-0.5 rounded text-hud-neonCyan bg-cyan-500/10 font-bold">1x</button>
+                        <button onclick="setSpeed(2)" class="speed-btn px-2 py-0.5 rounded text-hud-textMuted hover:text-hud-text">2x</button>
+                        <button onclick="setSpeed(5)" class="speed-btn px-2 py-0.5 rounded text-hud-textMuted hover:text-hud-text">5x</button>
+                        <button onclick="setSpeed(10)" class="speed-btn px-2 py-0.5 rounded text-hud-textMuted hover:text-hud-text">10x</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex-1 grid grid-cols-2 gap-4">
+                <div class="glass-panel rounded-xl p-4 flex flex-col justify-between relative">
+                    <span class="text-[10px] font-mono uppercase tracking-widest text-hud-textMuted">VELOCIDAD</span>
+                    <div class="my-1">
+                        <span id="hud-speed" class="text-2xl font-black font-mono tracking-tighter text-hud-text">0.0</span>
+                        <span class="text-xs text-hud-neonCyan font-bold tracking-wider ml-1">Km/h</span>
+                    </div>
+                    <div class="h-1 w-full bg-slate-700/30 rounded-full overflow-hidden">
+                        <div id="hud-speed-bar" class="h-full bg-hud-neonCyan transition-all duration-300" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div class="glass-panel rounded-xl p-4 flex flex-col justify-between relative">
+                    <span class="text-[10px] font-mono uppercase tracking-widest text-hud-textMuted">DISTANCIA RECORRIDA</span>
+                    <div class="my-1">
+                        <span id="hud-distance" class="text-2xl font-black font-mono tracking-tighter text-hud-text">0.00</span>
+                        <span class="text-xs text-hud-neonPurple font-bold tracking-wider ml-1">Km</span>
+                    </div>
+                    <span class="text-[9px] font-mono text-hud-textMuted uppercase">Odómetro Relativo</span>
+                </div>
+
+                <div class="glass-panel rounded-xl p-4 col-span-2 flex items-center justify-between">
+                    <div class="flex items-center space-x-3">
+                        <i data-lucide="clock" class="w-4 h-4 text-hud-textMuted"></i>
+                        <div>
+                            <span class="text-[9px] font-mono uppercase tracking-widest text-hud-textMuted block">ESTAMPA DE TIEMPO</span>
+                            <span id="hud-time" class="text-base font-bold font-mono tracking-wide text-hud-neonCyan">--:--:--</span>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-[9px] font-mono uppercase tracking-widest text-hud-textMuted block">FECHA</span>
+                        <span id="hud-date" class="text-xs font-mono font-bold text-hud-text">-- / -- / ----</span>
+                    </div>
+                </div>
+
+                <div id="hud-console-log" class="hidden"></div>
+            </div>
+        </section>
+
+        <section class="lg:col-span-8 flex flex-col gap-4 h-[75vh] lg:h-auto">
+            
+            <div class="flex-1 glass-panel rounded-xl overflow-hidden relative min-h-[340px]">
+                <button id="btn-satellite" onclick="toggleSatelliteView()" title="Alternar Vista Satélite"
+                    class="absolute top-3 right-3 z-10 p-2 rounded border border-hud-border bg-hud-card text-hud-textMuted hover:text-hud-neonCyan transition shadow-lg flex items-center gap-1.5 text-xs font-mono uppercase tracking-wider">
+                    <i data-lucide="globe" class="w-3.5 h-3.5"></i>
+                    <span>Satélite</span>
+                </button>
+
+                <div id="map-placeholder" class="absolute inset-0 bg-slate-950/50 backdrop-blur-sm z-20 flex flex-col items-center justify-center p-4">
+                    <i data-lucide="map" class="w-8 h-8 text-hud-neonCyan animate-bounce mb-2"></i>
+                    <p class="font-mono text-sm text-hud-text tracking-wide uppercase">SISTEMA CARTOGRÁFICO VECTORIAL</p>
+                </div>
+                <div id="map"></div>
+            </div>
+
+            <div class="h-[220px] glass-panel rounded-xl p-4 relative flex flex-col">
+                <div class="flex justify-between items-center mb-2 z-10">
+                    <div class="font-mono text-[10px] tracking-widest uppercase text-hud-textMuted flex items-center gap-1.5">
+                        <i data-lucide="trending-up" class="w-3.5 h-3.5 text-hud-neonCyan"></i> Perfil Dinámico: Tiempo vs Velocidad
+                    </div>
+                    <div class="flex space-x-1">
+                        <button onclick="zoomChart('in')" title="Zoom Acercar Gráfico" class="p-1 rounded border border-hud-border bg-hud-card text-hud-textMuted hover:text-hud-neonCyan transition">
+                            <i data-lucide="zoom-in" class="w-3.5 h-3.5"></i>
+                        </button>
+                        <button onclick="zoomChart('out')" title="Zoom Alejar Gráfico" class="p-1 rounded border border-hud-border bg-hud-card text-hud-textMuted hover:text-hud-neonCyan transition">
+                            <i data-lucide="zoom-out" class="w-3.5 h-3.5"></i>
+                        </button>
+                        <button onclick="zoomChart('reset')" title="Restaurar Escala" class="p-1 rounded border border-hud-border bg-hud-card text-hud-textMuted hover:text-hud-neonCyan transition">
+                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="flex-1 w-full h-full relative">
+                    <canvas id="telemetryChart"></canvas>
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <script>
+        // Placeholder de Datos CSV Inyectados por Android (REQ 2)
+        const androidCsvData = `<!-- ANTENA_DATA_PLACEHOLDER -->`;
+
+        lucide.createIcons();
+
+        // Variables de Control Maestro
+        let telemetryData = [];
+        let currentIndex = 0;
+        let isPlaying = false;
+        let playbackInterval = null;
+        let playbackSpeed = 1;
+        
+        // Estados y Matrices de Escala de Zoom
+        let chartZoomFactor = 1; 
+        let playbackZoomLevel = 0; // 0: Global, 1: Intermedio, 2: Detalle quirúrgico
+        let playbackWindowRadius = 0;
+        let isSatelliteView = false; // Flag para rastrear estado de vista satelital
+
+        // Elementos de Librerías
+        let map = null;
+        let tileLayer = null;
+        let routePolyline = null;
+        let liveMarker = null;
+        let telemetryChart = null;
+
+        // Paleta de colores HEX dura para evitar fallos de renderizado Canvas/SVG
+        const colorsHEX = {
+            dark:  { cyan: '#00f2fe', purple: '#9d4edd', grid: 'rgba(255, 255, 255, 0.05)', ticks: '#64748b' },
+            light: { cyan: '#0ea5e9', purple: '#7c3aed', grid: 'rgba(15, 23, 42, 0.06)', ticks: '#475569' }
+        };
+
+        function getActiveThemeColors() {
+            return document.body.classList.contains('light-theme') ? colorsHEX.light : colorsHEX.dark;
+        }
+
+        // Plugin Vertical de Tracking para Chart.js
+        const verticalIndicatorPlugin = {
+            id: 'verticalIndicator',
+            afterDraw: (chart) => {
+                if (chart.config.options.plugins.verticalIndicator && chart.config.options.plugins.verticalIndicator.activeIndex !== undefined) {
+                    const activeIndex = chart.config.options.plugins.verticalIndicator.activeIndex;
+                    const meta = chart.getDatasetMeta(0);
+                    
+                    if (meta.data && meta.data[activeIndex]) {
+                        const x = meta.data[activeIndex].x;
+                        const y = meta.data[activeIndex].y;
+                        const ctx = chart.ctx;
+                        const colors = getActiveThemeColors();
+                        
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.moveTo(x, chart.chartArea.top);
+                        ctx.lineTo(x, chart.chartArea.bottom);
+                        ctx.lineWidth = 1.5;
+                        ctx.strokeStyle = colors.cyan;
+                        ctx.setLineDash([4, 4]);
+                        ctx.stroke();
+                        
+                        ctx.beginPath();
+                        ctx.arc(x, y, 6, 0, 2 * Math.PI);
+                        ctx.fillStyle = colors.cyan;
+                        ctx.shadowBlur = 8;
+                        ctx.shadowColor = colors.cyan;
+                        ctx.fill();
+                        ctx.restore();
+                    }
+                }
+            }
+        };
+        Chart.register(verticalIndicatorPlugin);
+
+        // --- MANEJO DE TEMAS INTEGRADO ---
+        function toggleTheme() {
+            document.body.classList.toggle('light-theme');
+            const isLight = document.body.classList.contains('light-theme');
+            
+            document.getElementById('theme-icon-sun').classList.toggle('hidden', !isLight);
+            document.getElementById('theme-icon-moon').classList.toggle('hidden', isLight);
+            
+            updateMapTileLayer();
+            updateChartThemeAndGradient();
+        }
+
+        function updateMapTileLayer() {
+            if (!map) return;
+            if (tileLayer) map.removeLayer(tileLayer);
+            
+            let url;
+            let maxZoomLevel = 20;
+
+            if (isSatelliteView) {
+                // Servidor de Mapas Satelitales de Esri (Mundial)
+                url = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+                maxZoomLevel = 19;
+            } else {
+                const isLight = document.body.classList.contains('light-theme');
+                url = isLight 
+                    ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
+                    : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+            }
+                
+            tileLayer = L.tileLayer(url, { maxZoom: maxZoomLevel }).addTo(map);
+
+            // Refrescar el estilo del pin dinámico para que no se pierda en el cambio
+            if (liveMarker) {
+                const colors = getActiveThemeColors();
+                liveMarker.setStyle({ color: colors.cyan, fillColor: colors.cyan });
+            }
+        }
+
+        // Función para conmutar la vista Satélite de forma fluida
+        function toggleSatelliteView() {
+            if (!map) return;
+            isSatelliteView = !isSatelliteView;
+            
+            const btn = document.getElementById('btn-satellite');
+            if (isSatelliteView) {
+                btn.classList.add('border-hud-neonCyan', 'text-hud-neonCyan', 'bg-cyan-500/20');
+                btn.classList.remove('text-hud-textMuted');
+            } else {
+                btn.classList.remove('border-hud-neonCyan', 'text-hud-neonCyan', 'bg-cyan-500/20');
+                btn.classList.add('text-hud-textMuted');
+            }
+            updateMapTileLayer();
+        }
+
+        function updateChartThemeAndGradient() {
+            if (!telemetryChart) return;
+            const colors = getActiveThemeColors();
+            const ctx = document.getElementById('telemetryChart').getContext('2d');
+            
+            // Re-generar Gradiente de Relleno Solicitado
+            const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+            if (document.body.classList.contains('light-theme')) {
+                gradient.addColorStop(0, 'rgba(14, 165, 233, 0.3)');
+                gradient.addColorStop(1, 'rgba(14, 165, 233, 0.0)');
+            } else {
+                gradient.addColorStop(0, 'rgba(0, 242, 254, 0.3)');
+                gradient.addColorStop(1, 'rgba(0, 242, 254, 0.0)');
+            }
+
+            telemetryChart.data.datasets[0].borderColor = colors.cyan;
+            telemetryChart.data.datasets[0].backgroundColor = gradient;
+            
+            telemetryChart.options.scales.x.grid.color = colors.grid;
+            telemetryChart.options.scales.y.grid.color = colors.grid;
+            telemetryChart.options.scales.x.ticks.color = colors.ticks;
+            telemetryChart.options.scales.y.ticks.color = colors.ticks;
+            
+            telemetryChart.update('none');
+        }
+
+        // --- INTERPARSEO DE DATOS CSV ---
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) { parseCSV(e.target.result); };
+            reader.readAsText(file, 'UTF-8');
+        }
+
+        function parseCSV(text) {
+            const lines = text.split(/\r?\n/);
+            if (lines.length < 2) return;
+
+            telemetryData = [];
+            let tripSummaryText = "REGISTRO DE TELEMETRÍA UNIFICADO";
+            const coordRegex = /Lat:\s*([\d.-]+),\s*Lng:\s*([\d.-]+)/i;
+
+            for (let i = 1; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue;
+                const columns = line.split(';');
+                if (columns.length < 5) continue;
+
+                const velocidad = parseFloat(columns[2]?.replace(',', '.'));
+                const kmRecorridos = parseFloat(columns[3]?.replace(',', '.'));
+                
+                if (i === 1 && columns[5] && columns[5].trim() !== "") {
+                    tripSummaryText = columns[5].trim();
+                }
+
+                let lat = null, lng = null;
+                const match = columns[4] ? columns[4].match(coordRegex) : null;
+                if (match) {
+                    lat = parseFloat(match[1]);
+                    lng = parseFloat(match[2]);
+                }
+
+                telemetryData.push({
+                    index: telemetryData.length,
+                    fecha: columns[0],
+                    hora: columns[1],
+                    velocidad: isNaN(velocidad) ? 0 : velocidad,
+                    kmRecorridos: isNaN(kmRecorridos) ? 0 : kmRecorridos,
+                    lat: lat, lng: lng,
+                    hasGPS: lat !== null && lng !== null
+                });
+            }
+
+            document.getElementById('trip-summary').textContent = tripSummaryText;
+            document.getElementById('hud-console-log').innerHTML = `Log parseado. Registros: ${telemetryData.length}. Periféricos cartográficos y de barrido gráfico acoplados correctamente.`;
+
+            initMapAndRoute();
+            initChart();
+            resetPlaybackState();
+        }
+
+        // --- COMPONENTES VISUALES CORREGIDOS ---
+        function initMapAndRoute() {
+            document.getElementById('map-placeholder').classList.add('hidden');
+            const validPoints = telemetryData.filter(pt => pt.hasGPS);
+            const latLngs = validPoints.map(pt => [pt.lat, pt.lng]);
+
+            if (map) map.remove();
+
+            // Re-instanciar el lienzo cartográfico
+            map = L.map('map', { zoomControl: true, attributionControl: false });
+            updateMapTileLayer();
+
+            if (latLngs.length > 0) {
+                const colors = getActiveThemeColors();
+                routePolyline = L.polyline(latLngs, { color: colors.purple, weight: 4, opacity: 0.85 }).addTo(map);
+                map.fitBounds(routePolyline.getBounds(), { padding: [30, 30] });
+
+                validPoints.forEach(pt => {
+                    const circle = L.circleMarker([pt.lat, pt.lng], { radius: 7, color: 'transparent', fillOpacity: 0 }).addTo(map);
+                    circle.bindPopup(`<div class="font-mono text-xs"><b>Hora:</b> ${pt.hora}<br><b>Velocidad:</b> ${pt.velocidad.toFixed(1)} Km/h<br><b>Recorrido:</b> ${pt.kmRecorridos.toFixed(2)} Km</div>`);
+                    circle.on('click', () => syncApplicationToPoint(pt.index));
+                });
+
+                // Pin con Color Seguro Hexadecimal
+                liveMarker = L.circleMarker([validPoints[0].lat, validPoints[0].lng], { 
+                    radius: 8, 
+                    color: colors.cyan, 
+                    fillColor: colors.cyan, 
+                    fillOpacity: 0.9, 
+                    weight: 3 
+                }).addTo(map);
+                
+                liveMarker.bindTooltip(`${validPoints[0].velocidad.toFixed(1)} Km/h`, { 
+                    permanent: true, 
+                    direction: 'top', 
+                    className: 'hud-tooltip', 
+                    offset: [0, -5] 
+                });
+            }
+        }
+
+        function initChart() {
+            const ctx = document.getElementById('telemetryChart').getContext('2d');
+            if (telemetryChart) telemetryChart.destroy();
+
+            // Gradiente Inicial
+            const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+            gradient.addColorStop(0, 'rgba(0, 242, 254, 0.3)');
+            gradient.addColorStop(1, 'rgba(0, 242, 254, 0.0)');
+
+            telemetryChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: telemetryData.map(pt => pt.hora),
+                    datasets: [{
+                        data: telemetryData.map(pt => pt.velocidad),
+                        borderColor: '#00f2fe',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        fill: true, 
+                        backgroundColor: gradient,
+                        tension: 0.25
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    layout: {
+                        padding: { bottom: 15 }
+                    },
+                    scales: { 
+                        x: { grid: { display: true }, ticks: { maxTicksLimit: 12 } }, 
+                        y: { beginAtZero: true, grid: { display: true } } 
+                    },
+                    plugins: { 
+                        legend: { display: false }, 
+                        verticalIndicator: { activeIndex: 0 },
+                        tooltip: { mode: 'index', intersect: false }
+                    },
+                    onClick: (event, activeElements, chart) => {
+                        const points = chart.getElementsAtEventForMode(event, 'index', { intersect: false }, true);
+                        if (points.length > 0) {
+                            const chartIndex = points[0].index;
+                            syncApplicationToPoint(chartIndex);
+                        }
+                    }
+                }
+            });
+            updateChartThemeAndGradient();
+        }
+
+        function resetPlaybackState() {
+            pausePlayback();
+            currentIndex = 0;
+            chartZoomFactor = 1;
+            playbackZoomLevel = 0;
+            
+            // Reactivar Controles de la UI
+            document.getElementById('timeline-slider').disabled = false;
+            document.getElementById('btn-play-pause').disabled = false;
+            document.getElementById('btn-p-zin').disabled = false;
+            document.getElementById('btn-p-zout').disabled = false;
+            document.getElementById('btn-p-zres').disabled = false;
+            
+            syncApplicationToPoint(0);
+        }
+
+        // --- COMPRESIÓN / ZOOM DEL REPRODUCTOR DE TIEMPO ---
+        function zoomPlayback(direction) {
+            if (telemetryData.length === 0) return;
+
+            if (direction === 'in') {
+                playbackZoomLevel = Math.min(2, playbackZoomLevel + 1);
+            } else if (direction === 'out') {
+                playbackZoomLevel = Math.max(0, playbackZoomLevel - 1);
+            } else if (direction === 'reset') {
+                playbackZoomLevel = 0;
+            }
+
+            // Calcular radio de la ventana de puntos según nivel de aumento
+            if (playbackZoomLevel === 1) playbackWindowRadius = Math.floor(telemetryData.length * 0.15); 
+            if (playbackZoomLevel === 2) playbackWindowRadius = Math.floor(telemetryData.length * 0.04); 
+
+            const logPanel = document.getElementById('hud-console-log');
+            if (playbackZoomLevel > 0) {
+                logPanel.innerHTML += `<br><span class="text-hud-neonCyan">[ZOOM REPRODUCTOR] Nivel ${playbackZoomLevel} activo. Ventana de precisión reducida.</span>`;
+            } else {
+                logPanel.innerHTML += `<br>[ZOOM REPRODUCTOR] Reseteado a Escala Global.`;
+            }
+
+            calculateSliderRange();
+        }
+
+        function calculateSliderRange() {
+            const slider = document.getElementById('timeline-slider');
+            if (telemetryData.length === 0) return;
+
+            if (playbackZoomLevel > 0) {
+                let min = currentIndex - playbackWindowRadius;
+                let max = currentIndex + playbackWindowRadius;
+                
+                // Tratar desbordamientos laterales
+                if (min < 0) { max -= min; min = 0; }
+                if (max >= telemetryData.length) { min -= (max - telemetryData.length + 1); max = telemetryData.length - 1; }
+                min = Math.max(0, min);
+
+                slider.min = min;
+                slider.max = max;
+                slider.value = currentIndex;
+                
+                document.getElementById('time-start').textContent = `[Z] ${telemetryData[min].hora}`;
+                document.getElementById('time-end').textContent = `[Z] ${telemetryData[max].hora}`;
+            } else {
+                slider.min = 0;
+                slider.max = telemetryData.length - 1;
+                slider.value = currentIndex;
+                
+                document.getElementById('time-start').textContent = telemetryData[0].hora;
+                document.getElementById('time-end').textContent = telemetryData[telemetryData.length - 1].hora;
+            }
+        }
+
+        // --- CONTROLES ZOOM GRÁFICO ---
+        function zoomChart(direction) {
+            if (!telemetryChart || telemetryData.length === 0) return;
+
+            if (direction === 'in') chartZoomFactor = Math.min(16, chartZoomFactor * 2);
+            else if (direction === 'out') chartZoomFactor = Math.max(1, chartZoomFactor / 2);
+            else if (direction === 'reset') chartZoomFactor = 1;
+
+            applyChartZoomViewport();
+        }
+
+        function applyChartZoomViewport() {
+            if (chartZoomFactor === 1) {
+                delete telemetryChart.options.scales.x.min;
+                delete telemetryChart.options.scales.x.max;
+            } else {
+                const windowSize = Math.floor(telemetryData.length / chartZoomFactor);
+                let min = currentIndex - Math.floor(windowSize / 2);
+                let max = currentIndex + Math.floor(windowSize / 2);
+
+                if (min < 0) { max -= min; min = 0; }
+                if (max >= telemetryData.length) { min -= (max - telemetryData.length + 1); max = telemetryData.length - 1; }
+                min = Math.max(0, min);
+
+                telemetryChart.options.scales.x.min = telemetryData[min].hora;
+                telemetryChart.options.scales.x.max = telemetryData[max].hora;
+            }
+            telemetryChart.update('none');
+        }
+
+        // --- SISTEMA INTERNO DE REPRODUCCIÓN ---
+        function togglePlayback() { isPlaying ? pausePlayback() : startPlayback(); }
+
+        function startPlayback() {
+            isPlaying = true;
+            document.getElementById('icon-play').setAttribute('data-lucide', 'pause');
+            lucide.createIcons();
+            
+            // 1x == 1 segundo por registro. Intervalo = 1000ms / playbackSpeed
+            const intervalMs = Math.max(30, Math.floor(1000 / playbackSpeed));
+            playbackInterval = setInterval(() => {
+                if (currentIndex >= telemetryData.length - 1) { pausePlayback(); return; }
+                currentIndex++;
+                syncApplicationToPoint(currentIndex);
+            }, intervalMs);
+        }
+
+        function pausePlayback() {
+            isPlaying = false;
+            if (playbackInterval) clearInterval(playbackInterval);
+            document.getElementById('icon-play').setAttribute('data-lucide', 'play');
+            lucide.createIcons();
+        }
+
+        function setSpeed(mult) {
+            playbackSpeed = mult;
+            document.querySelectorAll('.speed-btn').forEach(b => {
+                b.className = b.textContent === `${mult}x` ? "speed-btn px-2 py-0.5 rounded text-hud-neonCyan bg-cyan-500/10 font-bold" : "speed-btn px-2 py-0.5 rounded text-hud-textMuted hover:text-hud-text";
+            });
+            if (isPlaying) { pausePlayback(); startPlayback(); }
+        }
+
+        function syncTimelineFromSlider(val) {
+            if (isPlaying) pausePlayback();
+            syncApplicationToPoint(parseInt(val));
+        }
+
+        // --- RECEPTOR MAESTRO DE SINCRONIZACIÓN FLUIDA ---
+        function syncApplicationToPoint(index) {
+            if (index < 0 || index >= telemetryData.length) return;
+            currentIndex = index;
+            const pt = telemetryData[index];
+
+            calculateSliderRange();
+            document.getElementById('time-current-lbl').textContent = pt.hora;
+
+            // Datos HUD Alfanuméricos
+            document.getElementById('hud-speed').textContent = pt.velocidad.toFixed(1);
+            document.getElementById('hud-distance').textContent = pt.kmRecorridos.toFixed(2);
+            document.getElementById('hud-time').textContent = pt.hora;
+            document.getElementById('hud-date').textContent = pt.fecha;
+            document.getElementById('hud-speed-bar').style.width = `${Math.min(100, (pt.velocidad / 120) * 100)}%`;
+
+            // Mapeo del Marcador
+            if (map && liveMarker && pt.hasGPS) {
+                const ll = new L.LatLng(pt.lat, pt.lng);
+                liveMarker.setLatLng(ll);
+                liveMarker.setTooltipContent(`${pt.velocidad.toFixed(1)} Km/h`);
+                if (!map.getBounds().contains(ll)) map.panTo(ll);
+            }
+
+            // Tracking e Indicador Gráfico
+            if (telemetryChart) {
+                telemetryChart.config.options.plugins.verticalIndicator.activeIndex = index;
+                if (chartZoomFactor > 1) {
+                    applyChartZoomViewport();
+                } else {
+                    telemetryChart.update('none');
+                }
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            // Verificar si el placeholder fue reemplazado y contiene datos reales
+            if (typeof androidCsvData !== 'undefined' && androidCsvData.trim() !== "" && !androidCsvData.includes("ANTENA_DATA_PLACEHOLDER")) {
+                console.log("Detectados datos automáticos desde Android. Iniciando parseo...");
+                parseCSV(androidCsvData);
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+{
+  "name": "EdBenTracker",
+  "description": "EdBenTracker - Un odómetro de alta tecnología basado en sensores con estética de interfaz de usuario futurista HUD y FUI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

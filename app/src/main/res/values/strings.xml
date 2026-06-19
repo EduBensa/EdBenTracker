@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">EdBenTracker</string>
+    <string name="attribution_location_hud">GPS Odometer Location Updates</string>
+</resources>
